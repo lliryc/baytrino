@@ -110,7 +110,6 @@ if __name__ == '__main__':
     bnet.add_node('A', [0.5, 0.5])
     bnet.add_edge('X', 'A', [[0.2, 0.4], [0.55, 0.25], [0.25, 0.35]])
     bnet.add_edge('Y', 'A', [[0.1, 0.7], [0.4, 0.2], [0.5, 0.1]])
-    #pA = bnet.get_evidence({'X': 0, 'Y': 0}, 'A')
     pA = bnet.get_evidence({'X': 0, 'Y': 2}, 'A')
     print(pA)
 
