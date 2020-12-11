@@ -156,7 +156,7 @@ def run_baytrino_model():
     bnet.add_edge('X', 'A', [[0.2, 0.4], [0.55, 0.25], [0.25, 0.35]])
     bnet.add_edge('Y', 'A', [[0.1, 0.7], [0.4, 0.2], [0.5, 0.1]])
     pA = bnet.get_evidence({'X': 0, 'Y': 2}, 'A')
-    #print(pA)
+    print(pA)
 
 def test1_baytrino():
     start_time = time.time()
@@ -201,6 +201,8 @@ def run_pgmpy_model():
     bmodel.add_cpds(*cdp_vars)
 
     inf = VariableElimination(bmodel)
+
+    inf.query(['A'], {'X': 0, 'Y': 2})
 
 def test1_pgmpy():
     start_time = time.time()
