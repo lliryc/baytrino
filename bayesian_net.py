@@ -202,7 +202,8 @@ def run_pgmpy_model():
 
     inf = VariableElimination(bmodel)
 
-    inf.query(['A'], {'X': 0, 'Y': 2})
+    pA = inf.query(['A'], {'X': 0, 'Y': 2})
+    print(pA)
 
 def test1_pgmpy():
     start_time = time.time()
