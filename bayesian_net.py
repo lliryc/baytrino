@@ -1,6 +1,6 @@
 import numpy as np
 import typing as t
-from  value_vector import ValueVector
+from value_vector import ValueVector
 from conditional_distribution import ProbRelation
 import functools
 import random
@@ -11,11 +11,47 @@ from pgmpy.sampling import BayesianModelSampling
 import time
 
 import pgmpy
-#import dask
-#import dask.array as da
-#dask.config.set(scheduler='threads')
 
 class BayesianNet:
+    """
+    A class to represent a Bayesian Network.
+
+    Attributes
+    ----------
+    nodes : dict
+        Dictionary to store nodes and their distributions.
+    edges : dict
+        Dictionary to store edges and their conditional probability distributions.
+    edges_inv : dict
+        Inverse of edges dictionary for quick lookup.
+    var_cache : dict
+        Cache for computed variables.
+    factor_cache : dict
+        Cache for computed factors.
+
+    Methods
+    -------
+    add_node(name: str, distr: t.List[float])
+        Adds a node with the given name and distribution.
+    add_edge(ancestor: str, descendent: str, conditional_prob_matrix: t.List[t.List[float]])
+        Adds an edge with the given conditional probability matrix.
+    get_evidence(vars: t.Dict[str, int], target_var: str)
+        Computes the evidence for the target variable given the observed variables.
+    _calc_di(cpd: ProbRelation, ancestor_key, ancestor_distr: ValueVector, child_key) -> ProbRelation
+        Calculates the conditional probability distribution for a given ancestor and child.
+    _mult_pair_di(d1: ProbRelation, d2: ProbRelation) -> ProbRelation
+        Multiplies two conditional probability distributions.
+    _calc_a(child_key) -> np.ndarray
+        Calculates the complement of the probability vector for a given child.
+    _compute_var(var: str) -> ValueVector
+        Computes the probability vector for a given variable.
+    _apply_cpd(v: ValueVector, cpd: ProbRelation) -> ProbRelation
+        Applies a conditional probability distribution to a value vector.
+    _mult_pair_cpd(cpd1: ProbRelation, cpd2: ProbRelation) -> ProbRelation
+        Multiplies two conditional probability distributions.
+    _compute_factor(var_child, *var_ancestors) -> ValueVector
+        Computes the factor for a given child variable and its ancestors.
+    """
 
     def __init__(self):
         self.nodes = {}
@@ -24,13 +60,35 @@ class BayesianNet:
         self.var_cache = {}
         self.factor_cache = {}
 
-    def add_node(self, name:str, distr:t.List[float]):
-        if str is self.nodes:
+    def add_node(self, name: str, distr: t.List[float]):
+        """
+        Adds a node with the given name and distribution.
+
+        Parameters
+        ----------
+        name : str
+            The name of the node.
+        distr : list of float
+            The probability distribution of the node.
+        """
+        if name in self.nodes:
             raise Exception(f"Node with name '{name}' already exists")
         self.nodes[name] = ValueVector(distr)
         self.edges[name] = {}
 
-    def add_edge(self, ancestor: str, descendent: str, conditional_prob_matrix: t.List[t.List[float]]): # P(a|d)
+    def add_edge(self, ancestor: str, descendent: str, conditional_prob_matrix: t.List[t.List[float]]):
+        """
+        Adds an edge with the given conditional probability matrix.
+
+        Parameters
+        ----------
+        ancestor : str
+            The name of the ancestor node.
+        descendent : str
+            The name of the descendent node.
+        conditional_prob_matrix : list of list of float
+            The conditional probability matrix P(descendent|ancestor).
+        """
         if ancestor not in self.nodes:
             raise Exception(f"Node with name '{ancestor}' doesn't exist yet")
         if descendent not in self.nodes:
@@ -40,7 +98,22 @@ class BayesianNet:
         cpd = ProbRelation(conditional_prob_matrix, (len(conditional_prob_matrix), len(conditional_prob_matrix[0])))
         self.edges[ancestor][descendent] = cpd
 
-    def get_evidence(self, vars:t.Dict[str, int], target_var:str):
+    def get_evidence(self, vars: t.Dict[str, int], target_var: str):
+        """
+        Computes the evidence for the target variable given the observed variables.
+
+        Parameters
+        ----------
+        vars : dict of str to int
+            The observed variables and their values.
+        target_var : str
+            The target variable for which to compute the evidence.
+
+        Returns
+        -------
+        list of float
+            The computed evidence for the target variable.
+        """
         self.edges_inv = {}
 
         for ancestor in self.edges:
@@ -49,18 +122,16 @@ class BayesianNet:
                     self.edges_inv[descendent] = {}
                 self.edges_inv[descendent][ancestor] = self.edges[ancestor][descendent]
 
-        self.var_cache = dict(map(lambda var_key: (var_key, ValueVector([ float(i==vars[var_key]) for i in range(0, self.nodes[var_key].size())], index=vars[var_key])), vars.keys()))
+        self.var_cache = dict(map(lambda var_key: (var_key, ValueVector([float(i == vars[var_key]) for i in range(0, self.nodes[var_key].size())], index=vars[var_key])), vars.keys()))
         probs = self._compute_var(target_var).probs
         denom = np.sum(probs)
         return (probs / denom).tolist()
 
-    def _calc_di(self, cpd:ProbRelation, ancestor_key, ancestor_distr:ValueVector, child_key)->ProbRelation:
-
+    def _calc_di(self, cpd: ProbRelation, ancestor_key, ancestor_distr: ValueVector, child_key) -> ProbRelation:
         if ancestor_distr.index != -1:
             cpd_mx: np.ndarray = cpd.distibution[ancestor_distr.index].reshape(1, cpd.shape[1])
             ancestor_vec: np.ndarray = np.array([self.nodes[ancestor_key].probs[ancestor_distr.index]])
             ancestor_size = len(ancestor_vec)
-
         else:
             cpd_mx: np.ndarray = cpd.distibution
             ancestor_vec: np.ndarray = self.nodes[ancestor_key].probs
@@ -68,26 +139,25 @@ class BayesianNet:
 
         child_vec: np.ndarray = self.nodes[child_key].probs
         child_size = len(child_vec)
-        denom = cpd_mx * child_vec.reshape(1,child_size)
+        denom = cpd_mx * child_vec.reshape(1, child_size)
         result = (ancestor_vec.reshape(ancestor_size, 1) / denom) - np.array([1.0])
 
         return ProbRelation(result, result.shape)
 
-    def _mult_pair_di(self, d1:ProbRelation, d2:ProbRelation)->ProbRelation:
-
+    def _mult_pair_di(self, d1: ProbRelation, d2: ProbRelation) -> ProbRelation:
         d1_splits = np.hsplit(d1.distibution, d1.shape[1])
         d2_splits = np.hsplit(d2.distibution, d2.shape[1])
 
-        d_splits = [np.ndarray.reshape(d1_splits[k].reshape(d1.shape[0],1) * d2_splits[k].reshape(1, d2.shape[0]), (d1.shape[0] * d2.shape[0], 1)) for k in range(0, d1.shape[1])]
+        d_splits = [np.ndarray.reshape(d1_splits[k].reshape(d1.shape[0], 1) * d2_splits[k].reshape(1, d2.shape[0]), (d1.shape[0] * d2.shape[0], 1)) for k in range(0, d1.shape[1])]
         assembly = np.hstack(d_splits)
         return ProbRelation(assembly, assembly.shape)
 
-    def _calc_a(self, child_key)->np.ndarray:
+    def _calc_a(self, child_key) -> np.ndarray:
         vec = self.nodes[child_key].probs
         complement = np.array([1.0]) - vec
         return complement / vec
 
-    def _compute_var(self, var:str)->ValueVector:
+    def _compute_var(self, var: str) -> ValueVector:
         if var in self.var_cache:
             return self.var_cache[var]
 
@@ -106,7 +176,7 @@ class BayesianNet:
         return hash(repr(self))
 
     @staticmethod
-    def _apply_cpd(v:ValueVector, cpd: ProbRelation):
+    def _apply_cpd(v: ValueVector, cpd: ProbRelation):
         if v.index != -1:
             rel = cpd.distibution[v.index].reshape(1, cpd.distibution.shape[1])
             return ProbRelation(rel, rel.shape)
@@ -115,24 +185,26 @@ class BayesianNet:
             return ProbRelation(rel, rel.shape)
 
     @staticmethod
-    def _mult_pair_cpd(cpd1: ProbRelation, cpd2: ProbRelation)->ProbRelation:
-        if(cpd2 is None):
+    def _mult_pair_cpd(cpd1: ProbRelation, cpd2: ProbRelation) -> ProbRelation:
+        if cpd2 is None:
             return cpd1
         d1_splits = np.hsplit(cpd1.distibution, cpd1.shape[1])
         d2_splits = np.hsplit(cpd2.distibution, cpd2.shape[1])
 
-        d_splits = [np.ndarray.reshape(d1_splits[k].reshape(cpd1.shape[0],1) * d2_splits[k].reshape(1, cpd2.shape[0]), (cpd1.shape[0] * cpd2.shape[0], 1)) for k in range(0, cpd1.shape[1])]
+        d_splits = [np.ndarray.reshape(d1_splits[k].reshape(cpd1.shape[0], 1) * d2_splits[k].reshape(1, cpd2.shape[0]), (cpd1.shape[0] * cpd2.shape[0], 1)) for k in range(0, cpd1.shape[1])]
         assembly = np.hstack(d_splits)
         return ProbRelation(assembly, assembly.shape)
 
-
-    def _compute_factor(self, var_child, *var_ancestors)->ValueVector:
+    def _compute_factor(self, var_child, *var_ancestors) -> ValueVector:
         h = hash(tuple([var_child, var_ancestors]))
 
         if h in self.factor_cache:
             return self.factor_cache[h]
 
         anc_dict = dict(var_ancestors)
+        anc_rels = list(map(lambda var_anc: self._apply_cpd(anc_dict[var_anc], self.edges[var_anc][var_child]), anc_dictContinuing with the documented version of the provided code:
+
+```python
         anc_rels = list(map(lambda var_anc: self._apply_cpd(anc_dict[var_anc], self.edges[var_anc][var_child]), anc_dict))
         len_rels = len(anc_rels)
 
@@ -140,8 +212,9 @@ class BayesianNet:
             if len_rels % 2 == 1:
                 anc_rels.append(None)
                 len_rels = len_rels + 1
-            anc_rels = list(map(lambda i: self._mult_pair_cpd(anc_rels[i], anc_rels[i+1]), range(0, len_rels//2)))
+            anc_rels = list(map(lambda i: self._mult_pair_cpd(anc_rels[i], anc_rels[i+1]), range(0, len_rels // 2)))
             len_rels = len(anc_rels)
+        
         dist = anc_rels[0].distibution
         vec = dist.sum(axis=0)
         res = ValueVector(vec)
@@ -149,6 +222,11 @@ class BayesianNet:
         return res
 
 def run_baytrino_model():
+    """
+    Runs a simple example of the BayesianNet class.
+
+    Adds nodes and edges, then computes the evidence for node 'A' given evidence for 'X' and 'Y'.
+    """
     bnet = BayesianNet()
     bnet.add_node('Y', [0.4, 0.3, 0.3])
     bnet.add_node('X', [0.3, 0.4, 0.3])
@@ -159,6 +237,12 @@ def run_baytrino_model():
     print(pA)
 
 def test1_baytrino():
+    """
+    Performance test for the BayesianNet class.
+
+    Creates a network with 100 nodes and edges, and performs inference 1000 times,
+    measuring the elapsed time.
+    """
     start_time = time.time()
 
     bnet = BayesianNet()
@@ -173,7 +257,7 @@ def test1_baytrino():
         vals_ix[i] = var
 
     for i in range(0, 1000):
-        index = random.randrange(0,100)
+        index = random.randrange(0, 100)
         if(vals[vals_ix[index]] == 1):
             vals[vals_ix[index]] = 0
         else:
@@ -184,6 +268,11 @@ def test1_baytrino():
     return end_time - start_time
 
 def run_pgmpy_model():
+    """
+    Runs a simple example using pgmpy library.
+
+    Creates a Bayesian model with nodes and edges, then computes the evidence for node 'A'.
+    """
     edges = []
     cdp_vars = []
     cdp_a = TabularCPD('A', 2, [[0.5], [0.5]])
@@ -206,6 +295,12 @@ def run_pgmpy_model():
     print(pA)
 
 def test1_pgmpy():
+    """
+    Performance test for the pgmpy library.
+
+    Creates a Bayesian model with 100 nodes and edges, and performs inference 1000 times,
+    measuring the elapsed time.
+    """
     start_time = time.time()
 
     edges = []
@@ -214,7 +309,7 @@ def test1_pgmpy():
     cdp_vars.append(cdp_a)
     vals = {}
 
-    for i in range(0,100):
+    for i in range(0, 100):
         var  = 'X' + str(i)
         cdp_x = TabularCPD(var, 3, [[0.2, 0.4], [0.55, 0.25], [0.25, 0.35]], ['A'], [2])
         cdp_vars.append(cdp_x)
@@ -230,22 +325,5 @@ def test1_pgmpy():
     return end_time - start_time
 
 if __name__ == '__main__':
-    #print(f"test1 brazil, time elapsed '{test1_pgmpy()}'")
+    #print(f"test1 pgmpy, time elapsed '{test1_pgmpy()}'")
     print(f"test1 baytrino, time elapsed '{test1_baytrino()}'")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
